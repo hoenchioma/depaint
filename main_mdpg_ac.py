@@ -29,18 +29,19 @@ def set_args(num_agents=1, beta=0.2, topology='dense'):
     parser.add_argument('--gamma', type=float, default=0.99, help='discount factor')
     parser.add_argument('--critic_lr', type=float, default=1e-3, help='value learning rate')
     parser.add_argument('--grad_lr', type=float, default=3e-4, help='policy learning rate')
-    parser.add_argument('--dual_lr', type=float, default=3e-5, help='dual param learning rate')
+    parser.add_argument('--dual_lr', type=float, default=1e-3, help='dual param learning rate')
     parser.add_argument('--constraint', type=float, default=20.0, help='constraint')
     parser.add_argument('--lmbda', type=float, default=0.95, help='lambda for GAE')
     parser.add_argument('--max_eps_len', type=int, default=20, help='number of steps per episode')
-    parser.add_argument('--num_episodes', type=int, default=2000, help='number training episodes')
+    parser.add_argument('--num_episodes', type=int, default=5000, help='number training episodes')
     parser.add_argument('--beta', type=float, default=beta, help='beta for momentum-based variance reduction')
     parser.add_argument('--min_isw', type=float, default=0.0, help='minimum value to set importance weight')
     parser.add_argument('--topology', type=str, default=topology, choices=('dense', 'ring', 'bipartite'))
     parser.add_argument('--init_lr', type=float, default=3e-5, help='policy learning rate for initialization')
     parser.add_argument('--minibatch_size', type=int, default=10, help='number of trajectories for batch gradient')
     parser.add_argument('--init_minibatch_size', type=int, default=10, help='number of trajectories for batch gradient in initialization')
-    parser.add_argument('--clip_grad', type=float, default=1, help='gradient clipping')
+    parser.add_argument('--clip_grad', type=float, default=10, help='gradient clipping')
+    parser.add_argument('--dual_clip_grad', type=float, default=100, help='gradient clipping for dual param')
     args = parser.parse_args()
     return args
 
@@ -112,7 +113,7 @@ def run(args, env_name):
     obj_return_list = []
     util_return_list = []
     error_list = []
-    duality_gap_list = []
+    constraint_violation_list = []
     for i in range(10):
         with tqdm(total=int(args.num_episodes / 10), desc='Iteration %d' % i) as pbar:
             for i_episode in range(int(args.num_episodes / 10)):
@@ -126,7 +127,7 @@ def run(args, env_name):
                 # episode_returns = 0
                 episode_obj_returns = 0
                 episode_util_returns = 0
-                episode_duality_gap = 0
+                episode_constraint_violation = 0
                 minibatch_disc_util_returns = []
                 v_lists = []
 
@@ -180,7 +181,7 @@ def run(args, env_name):
                                 break
 
                         episode_disc_util_returns.append(episode_disc_util_return)
-                        episode_duality_gap += max(episode_disc_util_return - args.constraint, 0)
+                        episode_constraint_violation += args.constraint - episode_disc_util_return
 
                         advantages = agent.update_value(transition_dict)
                         single_traj_v = agent.compute_v_list(transition_dict, advantages, prev_v_lists[idx], phis_list[idx],
@@ -198,7 +199,7 @@ def run(args, env_name):
                 # return_list.append(episode_returns / args.minibatch_size)
                 obj_return_list.append(episode_obj_returns / args.minibatch_size)
                 util_return_list.append(episode_util_returns / args.minibatch_size)
-                duality_gap_list.append(episode_duality_gap / args.minibatch_size)
+                constraint_violation_list.append(episode_constraint_violation / args.minibatch_size)
 
                 # Gradient tracking.
                 y_lists = take_grad_consensus(y_lists, pi)
@@ -214,7 +215,7 @@ def run(args, env_name):
 
                 # Update dual parameters
                 for agent, disc_util_return in zip(agents, minibatch_disc_util_returns):
-                    agent.update_dual_param(disc_util_return, args.dual_lr, args.constraint)
+                    agent.update_dual_param(disc_util_return, args.dual_lr, args.constraint, clip_grad=args.dual_clip_grad)
 
                 y_lists = copy.deepcopy(next_y_lists)
                 prev_v_lists = copy.deepcopy(v_lists)
@@ -223,10 +224,12 @@ def run(args, env_name):
                     pbar.set_postfix({'episode': '%d' % (args.num_episodes / 10 * i + i_episode + 1),
                                       'obj_return': '%.3f' % np.mean(obj_return_list[-10:]),
                                       'util_return': '%.3f' % np.mean(util_return_list[-10:]),
-                                      'duality_gap': '%.3f' % np.mean(duality_gap_list[-10:]),})
+                                      'constraint_violation': '%.3f' % np.mean(constraint_violation_list[-10:]),
+                                      'dual_param': '%.3f' % np.mean([agent.dual_param.item() for agent in agents]),})
                     writer.add_scalar("obj_rewards", np.mean(obj_return_list[-10:]), args.num_episodes / 10 * i + i_episode + 1)
                     writer.add_scalar("util_rewards", np.mean(util_return_list[-10:]), args.num_episodes / 10 * i + i_episode + 1)
-                    writer.add_scalar("duality_gap", np.mean(duality_gap_list[-10:]), args.num_episodes / 10 * i + i_episode + 1)
+                    writer.add_scalar("constraint_violation", np.mean(constraint_violation_list[-10:]), args.num_episodes / 10 * i + i_episode + 1)
+                    writer.add_scalar("dual_param", np.mean([agent.dual_param.item() for agent in agents]), args.num_episodes / 10 * i + i_episode + 1)
                 pbar.update(1)
     # mv_return_list = moving_average(return_list, 9)
     return obj_return_list, util_return_list, error_list
@@ -234,13 +237,34 @@ def run(args, env_name):
 
 if __name__ == '__main__':
     env_name = 'simple_spread_ac'
-    topologies = ['dense', 'ring', 'bipartite']
-    betas = [0.2, 0.2, 0.2]
-    labels = ['beta=0.2', 'beta=0.2', 'beta=0.2']
-    num_agents = 5
+    training_args = [
+        (2, 'ring', 0.2),
+        (3, 'ring', 0.2),
+        (4, 'ring', 0.2),
+        (5, 'ring', 0.2),
+        (2, 'dense', 0.2),
+        (3, 'dense', 0.2),
+        (4, 'dense', 0.2),
+        (5, 'dense', 0.2),
+        (2, 'bipartite', 0.2),
+        (3, 'bipartite', 0.2),
+        (4, 'bipartite', 0.2),
+        (5, 'bipartite', 0.2),
+        (6, 'ring', 0.2),
+        (6, 'dense', 0.2),
+        (6, 'bipartite', 0.2),
+    ]
+    # topologies = ['dense', 'ring', 'bipartite']
+    # betas = [0.2, 0.2, 0.2]
+    # labels = ['beta=0.2', 'beta=0.2', 'beta=0.2']
+    # num_agents = 5
 
-    for beta, label, topology in zip(betas, labels, topologies):
+    for num_agents, topology, beta in training_args:
+        print('-' * 60)
+        print(f'Training {num_agents} agents in {topology} topology with beta={beta}')
+        print('-' * 60)
         args = set_args(num_agents=num_agents, beta=beta, topology=topology)
+        label = f'beta={beta}'
         fpath = os.path.join('mdpgt_results', env_name, str(num_agents) + '_agents',
                              label + '_' + topology)  # + '_' + timestr
         if not os.path.isdir(fpath):

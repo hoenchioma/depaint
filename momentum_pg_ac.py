@@ -147,10 +147,12 @@ class MomentumPG:
         
         return advantages
 
-    def update_dual_param(self, disc_util_return, dual_lr, constraint):
+    def update_dual_param(self, disc_util_return, dual_lr, constraint, clip_grad):
         """Update dual parameters (via projected gradient descent)."""
         
-        self.dual_param = self.dual_param - dual_lr * (disc_util_return - constraint)
+        grad = torch.tensor(disc_util_return - constraint, dtype=torch.float).to(self.device)
+        grad = torch.clamp(grad, -clip_grad, clip_grad)
+        self.dual_param = self.dual_param - dual_lr * grad
         self.dual_param = F.relu(self.dual_param) # Project onto non-negative orthant
 
         
@@ -253,7 +255,8 @@ def update_param(agent, v_k_list, lr=3e-4, clip_grad=1.0):
     """update parameters for an agent"""
     for idx, actor in enumerate(agent.actors):
         old_para = torch.nn.utils.convert_parameters.parameters_to_vector(actor.parameters())
-        new_para = old_para + lr * torch.clamp(v_k_list[idx], -clip_grad, clip_grad)
+        grad = torch.clamp(v_k_list[idx], -clip_grad, clip_grad)
+        new_para = old_para + lr * grad
         torch.nn.utils.convert_parameters.vector_to_parameters(new_para, actor.parameters())
 
 

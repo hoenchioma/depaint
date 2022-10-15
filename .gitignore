@@ -1,4 +1,12 @@
+# virtual environment
 .venv
+
+# python
 **/__pycache__
+
+# training results
 /*_results
 /records
+
+# VSCode
+/.vscode
