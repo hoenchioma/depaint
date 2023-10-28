@@ -1,6 +1,6 @@
 """
-Reference: https://github.com/xylee95/MD-PGT
-Paper: "MDPGT: Momentum-based Decentralized Policy Gradient Tracking"
+Reference: https://github.com/hoenchioma/depaint
+Paper: "DePAint: A Decentralized Safe Multi-Agent Reinforcement Learning Algorithm considering Peak and Average Constraints"
 """
 import argparse
 from tqdm import tqdm
@@ -22,7 +22,7 @@ device = torch.device('cpu')
 
 def set_args(num_agents=1, beta=0.2, topology='dense'):
     """Set parameters."""
-    parser = argparse.ArgumentParser(description='MDPG_AC')
+    parser = argparse.ArgumentParser(description='DePAint')
     parser.add_argument('--num_agents', type=int, default=num_agents, help='number of agents')
     parser.add_argument('--num_landmarks', type=int, default=num_agents, help='number of landmarks')
     parser.add_argument('--action_dim', type=int, default=5, help='number of actions')
@@ -47,7 +47,7 @@ def set_args(num_agents=1, beta=0.2, topology='dense'):
 
 
 def run(args, env_name):
-    """Run MDPGT algorithm."""
+    """Run DePAint algorithm."""
     # timestr = str(time()).replace('.', 'p')
     fpath2 = os.path.join('records', 'mdpgt_logs', str(num_agents) + '_agents', 'beta=' + str(args.beta), topology)
     if not os.path.isdir(fpath2):
@@ -88,18 +88,6 @@ def run(args, env_name):
     # Mini-batch initialization.
     prev_v_lists, y_lists = initialization_gt(sample_envs, agents, pi, lr=args.init_lr, minibatch_size=args.init_minibatch_size,
                                                 max_eps_len=args.max_eps_len, clip_grad=args.clip_grad)
-
-    # TEST: When topo is dense, complete consensus.
-    # numss = []
-    # for agent in agents:
-    #     nums = []
-    #     for idx, actor in enumerate(agent.actors):
-    #         a = torch.nn.utils.convert_parameters.parameters_to_vector(actor.parameters())
-    #         b = torch.nn.utils.convert_parameters.parameters_to_vector(agents[4].actors[idx].parameters())
-    #         num = np.linalg.norm(a.detach().numpy() - b.detach().numpy(), 2)
-    #         nums.append(num)
-    #     numss.append(nums)
-    # print(numss)
 
     envs = []
     env = make_particleworld.make_env(env_name, num_agents=args.num_agents, num_landmarks=args.num_landmarks)
@@ -238,26 +226,16 @@ def run(args, env_name):
 if __name__ == '__main__':
     env_name = 'simple_spread_ac'
     training_args = [
-        (2, 'ring', 0.2),
         (3, 'ring', 0.2),
         (4, 'ring', 0.2),
         (5, 'ring', 0.2),
-        (2, 'dense', 0.2),
         (3, 'dense', 0.2),
         (4, 'dense', 0.2),
         (5, 'dense', 0.2),
-        (2, 'bipartite', 0.2),
         (3, 'bipartite', 0.2),
         (4, 'bipartite', 0.2),
         (5, 'bipartite', 0.2),
-        (6, 'ring', 0.2),
-        (6, 'dense', 0.2),
-        (6, 'bipartite', 0.2),
     ]
-    # topologies = ['dense', 'ring', 'bipartite']
-    # betas = [0.2, 0.2, 0.2]
-    # labels = ['beta=0.2', 'beta=0.2', 'beta=0.2']
-    # num_agents = 5
 
     for num_agents, topology, beta in training_args:
         print('-' * 60)
